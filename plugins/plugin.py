@@ -17,41 +17,46 @@ limitations under the License.
 import importlib
 import inspect
 import sys
-import irc.utilities
 
-class NullPlugin:
+class NullPlugin(object):
     '''
     A do-nothing pluign to catalyze the system.
     Boom!  KaBoom!
     '''
-    def __init__(self):
-        pass 
+    def __init__(self,conn):
+        self.conn = conn 
     def run(self,user,message):
+        pass
+    def list(self):
         pass
 
 class PluginLoader(object):    
     '''
     This class loads and check plugins.
     '''
-    def __init__(self, plugs):
+    def __init__(self, plugs, conn):
         '''
         Initializes the plugins.
         plugins - list of python classes representing plugins
         '''
+        self.conn = conn
         self.plugins = []
         plugs.insert(0, "plugins.plugin") #Add in our module (containing the NullPlugin)
         for plug in plugs:
-            self.load(plug)
-    def load(self,module):
+            self.load(plug,conn)
+    def load(self,module,conn):
         '''
         Load a plugin's module, and scan for classes implementing 
         a run method accepting 'user' and 'message' arguments. 
         '''
+        print "Loading plugins from ",module
         importlib.import_module(module)
         classes = inspect.getmembers(sys.modules[module], inspect.isclass)
         for clazz in classes:
+            print "Checking class: ", clazz[0]
             if self.checkPlugin(clazz):
-                self.plugins.append(clazz())
+                print "Successfully loaded plugin: ", clazz[0]
+                self.plugins.append(clazz[1](conn))
         
     def checkPlugin(self, plugin): 
         '''
@@ -60,11 +65,13 @@ class PluginLoader(object):
         a list method that reports a list of commands.
         @return: True, if valid plugin, False if not
         '''
-        fun = getattr(plugin, "run", None)
-        if fun is None and len(inspect.getargspec(fun)[0]) == 3:
-            return False
-    
-    def run(self,user,message):
+        for spec in [("run",3),("list",1)]: 
+            fun = getattr(plugin[1], spec[0], None)
+            if fun is None or len(inspect.getargspec(fun)[0]) != spec[1]:
+                print "Class: ", plugin[0], " does not implement ", spec[0], " with ", str(spec[1]), " arguments."
+                return False
+        return True
+    def runAll(self,user,message):
         '''
         Run every plugin.
         user - username of the message reporter
@@ -73,25 +80,31 @@ class PluginLoader(object):
         '''
         rets = []
         for plugin in self.plugins:
+            print "Running: ", plugin
             #Don't perish on malformed plugin
             try:
                 rets.append(plugin.run(user, message))
-            except:
-                #Remove failing plugins
+            except Exception as e:
+                #Remove failing plugins   
+                print "Plugin failing: ", plugin, " Error: ", e
                 self.plugins.remove(plugin)
+                
                 #TODO: Notify cmd line of failure
         return rets
-    def list(self):
+    def listAll(self):
         '''
         Lists all plugins prepending their names.
         '''
         for plugin in self.plugins:
+            print "Listing:",plugin
             #Don't perish on malformed plugin
             try:
                 rmap = plugin.list()
+                if rmap is None:
+                    continue
                 for name,cmdlist in rmap.iteritems():
-                    irc.utilities.send(name+": [" + ", ".join(cmdlist))
-            except:
-                #Remove failing plugins
+                    self.conn.send(name+": [" + ", ".join(cmdlist)+"]")
+            except Exception as e:
+                #Remove failing plugins   
+                print "Plugin failing: ", plugin, " Error: ", e
                 self.plugins.remove(plugin)
-                #TODO: Notify cmd line of failure

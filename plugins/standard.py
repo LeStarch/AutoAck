@@ -17,21 +17,19 @@ limitations under the License.
 '''
 import shelve
 import atexit
-from irc import utilities 
 '''
 Contains the standard plugins created by Tyler et. al.
     Parrot  - Standard responses to standard command.
     Padiwan - Allows learning of new parrot commands.
     Help    - Sends the help.
 '''
-
-
-class ParrotPlugin:
+class ParrotPlugin(object):
     '''
     Repeats specific responses for specific inputs.
     '''
-    def __init__(self):
+    def __init__(self, conn):
         # Map from keywords to how the bot will respond in chat.
+        self.conn = conn
         self.responces = {
             "ack":  "ack",
             "git":  "#gitpush",
@@ -44,67 +42,80 @@ class ParrotPlugin:
     
     def run(self,user,message):
         ''' Responds to input '''
+        #Don't spam on commands
+        if self.conn.isPersonal(message):
+            return
         for key in self.responces:
             if key in message:
-                utilities.send((self.responces[key] + " ") * message.count(key, 0))
+                self.conn.send((self.responces[key] + " ") * message.count(key, 0))
     def list(self):
         '''Reports default commands.'''
-        return {"Default Commands: ",self.responces.keys()}
+        return {"Default Commands: ":self.responces.keys()}
     
 class Padiwan(ParrotPlugin):
-    def __init__(self):
+    def __init__(self,conn):
         ''' Init '''
-        #Clear defaults
-        self.defaults = {}
+        super(Padiwan,self).__init__(conn)
+        self.defaults = self.responces
+        self.authors = {}
         self.responces = shelve.open("autoack.shelf")
-        atexit.register(user_commands.close)
+        atexit.register(self.responces.close)
     def learn(self,cmd,response, user):
         ''' Learn a command '''
         if cmd not in self.defaults:
-            utilities.send(("Relearned" if cmd in self.responces else "Learned")+ " "+cmd)
+            self.conn.send(("Relearned" if cmd in self.responces else "Learned")+ " "+cmd)
             self.responces[cmd] = " ".join(response)
+            self.authors[cmd] = user
         else:
-            utilities.send("Go away, " + user + "!")
+            self.conn.send("Go away, " + user + "!")
     def forget(self,cmd):
         ''' Forget a command '''
         if cmd in self.defaults:
-            utilities.send("No.")
+            self.conn.send("No.")
         elif cmd in self.responces:
             self.responces.pop(cmd) 
-            utilities.send("Dropped like a bad habit.")
+            self.conn.send("Dropped like a bad habit.")
         else:
-            utilities.send("Maybe you're the one forgetting...")
+            self.conn.send("Maybe you're the one forgetting...")
     
     def run(self,user,message):
         '''Runs a command'''
-        parts = message.split()
-        if parts[0] == "learn":
-            self.learn(parts[1],parts[2:],user)
-        elif parts[0] == "forget":
-            self.forget(parts[1])
+        cmd = self.conn.getCommand(message)
+        args = self.conn.getArgs(message)
+        if cmd == "learn" and len(args) >= 2:
+            self.learn(args[0],args[1:],user)
+        elif cmd == "forget" and len(args) == 1:
+            self.forget(args[0])
+        elif cmd == "blame" and len(args) == 1:
+            self.conn.send(args[0] + " was created by " + self.authors[args[0]], user)
+        elif cmd == "learn" or cmd == "forget" or cmd == "blame":
+            self.conn.send("Incomplete command.",user)
         else:
-            super.run(user,message)
+            super(Padiwan,self).run(user,message)
     def list(self):
         '''Reports learned commands.'''
-        return {"Learned Commands: ",self.responces.keys()}  
+        return {"Learned Commands: ":self.responces.keys()}  
 
-class Help:
+class Help(object):
+    def __init__(self,conn):
+        '''Initialize yo'''
+        self.conn = conn
     def list(self):
         ''' Do nothing '''
         pass
     def run(self,user,message):
         ''' Check for help, and print help. '''
-        cmd = utilities.getCommand()
+        cmd = self.conn.getCommand(message)
         if cmd == "help":
-            nick = utilities.getNick()
-            utilities.send("Available commands:")
-            utilities.send("   " + nick + ": autotweet (monitor the defined twitter account and AutoAck Tweets)")
-            utilities.send("   " + nick + ": blame [key] (show user who created [key])")
-            utilities.send("   " + nick + ": forget [key] (forget user learned keyword [key])")
-            utilities.send("   " + nick + ": help (print this help message)")  
-            utilities.send("   " + nick + ": learn [key] [value] (learn to say [value] after [key])")
-            utilities.send("   " + nick + ": list (print list of available keywords)")
-            utilities.send("   " + nick + ": quiet [seconds] (don't talk for optional number of [seconds])")
-            utilities.send("   " + nick + ": speak (override a previous quiet command)")
-            utilities.send("   " + nick + ": tweet (send a tweet to the defined twitter account)")  
+            nick = self.conn.getNick()
+            self.conn.send("Available commands:")
+            self.conn.send("   " + nick + ": autotweet (monitor the defined twitter account and AutoAck Tweets)")
+            self.conn.send("   " + nick + ": blame [key] (show user who created [key])")
+            self.conn.send("   " + nick + ": forget [key] (forget user learned keyword [key])")
+            self.conn.send("   " + nick + ": help (print this help message)")  
+            self.conn.send("   " + nick + ": learn [key] [value] (learn to say [value] after [key])")
+            self.conn.send("   " + nick + ": list (print list of available keywords)")
+            self.conn.send("   " + nick + ": quiet [seconds] (don't talk for optional number of [seconds])")
+            self.conn.send("   " + nick + ": speak (override a previous quiet command)")
+            self.conn.send("   " + nick + ": tweet (send a tweet to the defined twitter account)")  
     

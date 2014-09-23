@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 '''
 Copyright 2014 Tyler Palsulich
 
@@ -41,37 +42,43 @@ class Mute():
         ''' Check if we can send '''
         return datetime.now() > self.time
 
-def main_loop(conn):
+def main_loop(conn,plugins,seconds):
     '''
     Loop forever processing messages as they come. 
     conn - connection to irc (see irc.irc.IRC)
     '''
     mute = Mute()
-    plugsys = PluginLoader()
+    plugsys = PluginLoader(plugins,conn)
     while True:
         message = conn.recv()
-        print message
-    
+        print 'Message received: "',message,'"'    
         # Only respond to chat from the current chatroom (not private or administrative log in messages).
-        if conn.getSplitter() not in message:
+        if not conn.getSplitter() in message:
             continue
     
         # Get the content of the message.
         user = message.split("!")[0][1:]
         message = message.split(conn.getSplitter())[1]
-    
-        # Convert to lowercase and split the message based on whitespace.
-        split = message.lower().split()
-        if split[0] == args.nick.lower() + ":":   # Command addressed to the bot (e.g. learn or forget).
-            if split[1] == "quiet" and len(split) <= 3:
-                mute.silenceFor(args.seconds if len(split) ==2 else int(split[2]) )
-                conn.send("Whatever you say.", user, True)
-            elif split[1] == "speak" and len(split) == 2:
+        
+        if conn.isPersonal(message):   # Command addressed to the bot (e.g. learn or forget).
+            cmd = conn.getCommand(message)
+            args = conn.getArgs(message)
+            if cmd == "quiet" and len(args) <= 1:
+                secs = seconds if len(args) == 0 else int(args[0])
+                mute.silenceFor(secs)
+                conn.send("Silence for "+str(secs)+" seconds.", user)
+                continue
+            elif cmd == "speak":
                 mute.silenceFor(0)
-            elif split[1] == "list" and len(split) == 2:
-                plugsys.list()
-        elif mute.canSend():
-            plugsys.run(user,message)
+                continue
+            elif cmd == "list":
+                plugsys.listAll()
+                continue
+        #Plugins may implement bot commands
+        if mute.canSend():
+            plugsys.runAll(user,message)
+        else:
+            print "Shhhhhhh...I have to be quiet."
 
 if __name__ == '__main__':
     ''' Main method'''
@@ -81,13 +88,22 @@ if __name__ == '__main__':
         parser.add_argument('-s', '--server',  default='chat.freenode.net', help='Server to connect to')
         parser.add_argument('-q', '--quiet',   default=30,   type=int,      help='Default number of seconds to stay quiet when told')
         parser.add_argument('-p', '--port',    default=6667, type=int,      help='Port to use when connecting to the server.')
-        parser.add_argument('channel',                                      help='Channel to connect to.')  
+        parser.add_argument('-l', '--plugins', default='plugins.standard',  help='Comma separated list of plugins to use')
+        parser.add_argument('channel',                                      help='Channel to connect to.')
+        
         args = parser.parse_args()
         #Force channel to start with #
         if args.channel[0] != "#":
             args.channel = "#" + args.channel
-        conn = irc.irc.IRC(args.nick,args.channel,args.server,args.port)
-        main_loop(conn)
+        try:
+            conn = irc.irc.IRC(args.nick,args.channel,args.server,args.port)
+        except Exception as e:
+            print >> sys.stderr, "\nFailed to connect to channel: ",args.channel," on server: ", args.server, "/",args.port, " as ",args.nick, e
+        try:
+            plugins = args.plugins.split(",")
+        except Exception as e:
+            print >> sys.stderr, "\nFailed to parse plugin list: ",args.plugins
+        main_loop(conn,plugins,args.quiet)
     except KeyboardInterrupt:
         print >> sys.stderr, '\nExiting by user request.\nAufwiedersehen mien Freund.\n再見，我的朋友.\n'
         sys.exit(0)
